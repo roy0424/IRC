@@ -27,9 +27,9 @@ std::string Client::get_host() const
     return this->_hostname;
 }
 
-std::string Client::get_channel() const
+std::vector<std::string> Client::get_channel() const
 {
-    return this->_in_channel;
+    return this->_channels;
 }
 
 void Client::set_nick(std::string nick)
@@ -49,7 +49,19 @@ void Client::set_host(std::string hostname)
 
 void Client::set_channel(std::string channel)
 {
-    _in_channel = channel;
+    _channels.push_back(channel);
+}
+
+void Client::del_channel(std::string channel)
+{
+    std::vector<std::string>::iterator it;
+
+    it = _channels.begin();
+    for (; it < _channels.end(); it++)
+    {
+        if ((*it) == channel)
+            _channels.erase(it);
+    }
 }
 
 bool Client::operator==(const void* other) const {

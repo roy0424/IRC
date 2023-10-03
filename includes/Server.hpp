@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h> // sockaddr_in
 #include <vector>
+#include <iterator>
 #include <poll.h>
 #include <iostream>
 #include <unistd.h> // close
@@ -23,9 +24,8 @@ class Server
 {
 	public:
 		typedef std::vector<struct pollfd>	pollfd_vec;
-		typedef std::vector<Client>			client_vec;
-		typedef std::vector<Channel>		channel_vec;
-		typedef std::vector<Client*>		users_vec;
+		typedef std::vector<Client*>		client_vec;
+		typedef std::vector<Channel*>		channel_vec;
 		typedef std::vector<std::string>	str_vec;
 	private:
 		std::string			_pwd;
@@ -37,16 +37,16 @@ class Server
 		channel_vec			_channel;
 
 		char				_buf[BUF_SIZE];
+		str_vec				_msg;
 	public:
 		Server(int port, std::string pwd);
 		~Server();
 		void push_back_fd(int fd, short event);
-		void close_fd(int fd);
 		void server_run();
 		void accept_client();
 		int	 recv_message(int fd);
 		void send_message(std::string const& msg, int c_fd);
-		void send_message(std::string const& cmd, std::string const& msg, Channel &channel, int c_fd);
+		void send_message(std::string const& cmd, std::string const& msg, Channel* channel, int c_fd);
 		std::string get_message(int fd);
 		str_vec split_commands(std::string msg);
 		int	 execute_command(std::string msg, int c_fd);
@@ -55,39 +55,17 @@ class Server
 		void handle_err(int err_num, std::string err_msg, int c_fd);
 
 		void save_client(Client& client);
-		Client& getClient(int c_fd);
-		Client& getClient(std::string name);
-		Channel& getChannel(std::string name);
-		int	is_client(int c_fd);
+		void save_channel(Channel& channel);
+		Client* getClient(int c_fd);
+		Client* getClient(std::string name);
+		Client* getClientByHost(std::string name);
+		Channel* getChannel(std::string name);
+		void set_empty_string(int c_fd);
 		
 		void	delClient(int c_fd);
-		void	delChannel(Channel& channel);
+		void	delChannel(Channel* channel);
 		int is_valid_nick(int c_fd, std::string nick);
 		int is_valid_channel(std::string name);
-		void save_channel(Channel& channel);
 };
 
 #endif
-
-
-/* 서버의 소켓통신 과정 */
-
-// socket
-// bind
-// listen
-// pollfd 반복 순회
-	// accept
-	// recv/send
-// close
-
-
-
-
-/*   to do list   */
-
-// excute_command
-    // buf 메세지 어떻게 관리할지 (다른 소켓이 저장할 경우)
-// POLLHUP(클라이언트가 통신 끊음) 일 때
-
-
-// fcntl 정확한 역할이 무엇인지

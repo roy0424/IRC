@@ -1,5 +1,5 @@
 CXX = c++
-CXXFLAGS = -g3 -fsanitize=address -Werror -Wall -Wextra -std=c++98
+CXXFLAGS = -Wall -Wextra -Werror -std=c++98
 NAME = ircserv
 
 INCLUDES_DIR = includes/
@@ -35,6 +35,8 @@ clean :
 
 fclean : clean
 	rm -rf $(NAME)
+	@rm -rf ircserv.dSYM
+	@rm -rf report.xml
 
 re : 
 	make fclean 

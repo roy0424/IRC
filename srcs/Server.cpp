@@ -18,11 +18,29 @@ Server::Server(int port, std::string pwd)
 
     if (listen(_serv_socket_fd, 42) == -1)
         throw std::runtime_error("Error : listen failed");
+
+    _msg.resize(100, std::string(""));
+    std::cout << "==========================================================\n";
+    std::cout << "                 my little little ircserv\n";
+    std::cout << "==========================================================\n";
 }
 
 Server::~Server()
 {
-    close(_serv_socket_fd);
+    for (client_vec::iterator it = _client.begin(); it != _client.end(); ++it)
+    {
+        delete *it;
+    }
+    _client.clear();
+    for (channel_vec::iterator it = _channel.begin(); it != _channel.end(); ++it)
+    {
+        delete *it;
+    }
+    _channel.clear();
+    for (pollfd_vec::iterator it = _pollfd_vec.begin(); it != _pollfd_vec.end(); ++it)
+    {
+        close((*it).fd);
+    }
     exit(0);
 }
 
@@ -35,32 +53,13 @@ void Server::push_back_fd(int fd, short event)
     _pollfd_vec.push_back(s_fd);
 }
 
-void Server::close_fd(int fd)
-{
-    pollfd_vec::iterator it;
-
-    for (it = _pollfd_vec.begin(); it != _pollfd_vec.end(); ++it)
-    {
-        if ((*it).fd == fd)
-        {
-            _pollfd_vec.erase(it);
-            break;
-        }
-    }
-    close(fd);
-}
-
 void Server::server_run()
 {
-    int prepared_fd;
+    int prepared_fd = 0;
 
     while (1)
     {
-        prepared_fd = poll(_pollfd_vec.data(), _pollfd_vec.size(), 1000);
-        std::cout << "prepared_fd : " << prepared_fd << std::endl;
-        while (prepared_fd == 0) {
-            prepared_fd = poll(_pollfd_vec.data(), _pollfd_vec.size(), 1000);
-        }
+		prepared_fd = poll(_pollfd_vec.data(), _pollfd_vec.size(), 1000);
         if (prepared_fd < 0)
             throw std::runtime_error("Error : poll failed");
         // server fd
@@ -69,31 +68,24 @@ void Server::server_run()
         // client fd
         for (pollfd_vec::iterator iter = _pollfd_vec.begin() + 1; iter < _pollfd_vec.end(); ++iter)
         {
-            std::cout << " : " << (*iter).revents << std::endl;
-            // client disconnect
-            if (iter->revents & POLLHUP)
-            {
-                Command command("QUIT :leaving");
-                command.cmd_quit(*this, (*iter).fd);
-                --iter;
-                continue;
-                /* 구현 해야함 */
-                // QUIT command 를 사용하면 어떨까
-            }
-            if (iter->revents & POLLNVAL)
-            {
-                delClient((*iter).fd);
-                --iter;
-                continue;
-            }
             // client receive
             if (iter->revents & POLLIN)
             {
                 if (!recv_message((*iter).fd))
-                    --iter;
+                {
+                    iter = _pollfd_vec.erase(iter);
+                    continue;
+                }
+            }
+            // client disconnect
+            if (iter->revents & POLLHUP || iter->revents & POLLNVAL)
+            {
+                Command command("QUIT :leaving");
+                command.cmd_quit(*this, (*iter).fd);
+                iter = _pollfd_vec.erase(iter);
+                continue;
             }
         }
-        std::cout << "여기니 3" << std::endl;
     }
 }
 
@@ -120,12 +112,14 @@ int Server::recv_message(int fd)
 {
     try {
         std::string msg = get_message(fd);
+        if (msg == "")
+            return (1);
         if (!execute_command(msg, fd))
             return (0);
     } catch (std::exception& e) {
 		std::cerr << e.what() << "\n";
         Command command("QUIT");
-        command.cmd_quit(*this, fd);
+        command.cmd_quit_closed(*this, fd);
         return (0);
     }
     return (1);
@@ -133,18 +127,18 @@ int Server::recv_message(int fd)
 
 void Server::send_message(std::string const& msg, int c_fd)
 {
-    int len;
+    const char* message = msg.c_str();
+    int len = msg.length();
+    int total_len = 0;
 
     try {
-        std::cout << msg << std::endl;
-        len = send(c_fd, msg.c_str(), msg.length(), 0);
-        if (len < 0)
-            throw std::runtime_error("Error : send failed");
-        if (len == 0)
-            throw std::runtime_error("Closed socket");
-        // len 만큼 다 보내졌는지 확인 해야한다고 함
-        // if (len != msg.length()) 
-        //     len = send()
+        while (total_len < len) {
+            int sent = send(c_fd, message + total_len, len - total_len, 0);
+            if (sent == -1) {
+                throw std::runtime_error("Error : send failed");
+            }
+            total_len += sent;
+        }
     } catch (std::exception& e) {
         std::cerr << e.what() << "\n";
         Command command("QUIT");
@@ -153,80 +147,89 @@ void Server::send_message(std::string const& msg, int c_fd)
 }
 
 // :test!ubuntu@127.0.0.1 MODE #hi :-it
-void Server::send_message(std::string const& cmd, std::string const& msg, Channel &channel, int c_fd)
+void Server::send_message(std::string const& cmd, std::string const& msg, Channel* channel, int c_fd)
 {
-    int len;
-    Client client = getClient(c_fd);
-    users_vec users = channel.get_users();
-    users_vec opers = channel.get_opers();
-    users_vec::iterator it = opers.end();
+    Client* client = getClient(c_fd);
+    client_vec users = channel->get_users();
+    client_vec opers = channel->get_opers();
+    client_vec::iterator it = opers.end();
+    client_vec::iterator u_it = users.end();
     std::string message;
+    const char* c_message;
+    int len;
+    int total_len;
 
     try
     {
         for (it = opers.begin(); it < opers.end(); ++it)
         {
-            if ((*it)->get_fd() == c_fd) // 여기서 터짐
-                continue;
-            message = ":" + client.get_nick() + "!" + client.get_user() + "@" + client.get_host() + " "
-                        + cmd + " " + channel.get_name() + " " + msg + "\r\n";
-            len = send((*it)->get_fd(), message.c_str(), message.length(), 0);
-            if (len < 0)
-                throw std::runtime_error("Error : send failed");
-            if (len == 0)
-                throw std::runtime_error("Closed socket");
-            // if (len < 0)
-            //     throw std::runtime_error("Error : send failed");
-            // len 만큼 다 보내졌는지 확인 해야한다고 함
-            // if (len != msg.length()) 
-            //     len = send()
-            message = "";
-        }
-        for (it = users.begin(); it != users.end(); ++it)
-        {
+            len = 0;
+            total_len = 0;
             if ((*it)->get_fd() == c_fd)
                 continue;
-            message = ":" + client.get_nick() + "!" + client.get_user() + "@" + client.get_host() + " "
-                        + cmd + " " + channel.get_name() + " " + msg + "\r\n";
-            len = send((*it)->get_fd(), message.c_str(), message.length(), 0);
-            if (len < 0)
-                throw std::runtime_error("Error : send failed");
-            if (len == 0)
-                throw std::runtime_error("Closed socket");
-            // if (len < 0)
-            //     throw std::runtime_error("Error : send failed");
-            // len 만큼 다 보내졌는지 확인 해야한다고 함
-            // if (len != msg.length()) 
-            //     len = send()
+            message = ":" + client->get_nick() + "!" + client->get_user() + "@" + client->get_host() + " "
+                        + cmd + " " + channel->get_name() + " " + msg + "\r\n";
+            c_message = message.c_str();
+            len = message.length();
+            while (total_len < len) {
+                int sent = send((*it)->get_fd(), c_message + total_len, len - total_len, 0);
+                if (sent == -1) {
+                    throw std::runtime_error("Error : send failed");
+                }
+                total_len += sent;
+            }
+            message = "";
+        }
+        for (u_it = users.begin(); u_it < users.end(); ++u_it)
+        {
+            len = 0;
+            total_len = 0;
+            if ((*u_it)->get_fd() == c_fd)
+                continue;
+            message = ":" + client->get_nick() + "!" + client->get_user() + "@" + client->get_host() + " "
+                        + cmd + " " + channel->get_name() + " " + msg + "\r\n";
+            c_message = message.c_str();
+            len = message.length();
+            while (total_len < len) {
+                int sent = send((*u_it)->get_fd(), c_message + total_len, len - total_len, 0);
+                if (sent == -1) {
+                    throw std::runtime_error("Error : send failed");
+                }
+                total_len += sent;
+            }
             message = "";
         }
     }
     catch(const std::exception& e)
     {
         std::cerr << e.what() << "\n";
-		// close((*it)->get_fd);
+        Command command("QUIT");
+        command.cmd_quit(*this, c_fd);
     }
     
 }
 
 std::string Server::get_message(int fd)
 {
-    int len;
-    std::string msg = "";
-    // char _buf[BUF_SIZE]; \r\n 뒤에 남아있다면?? 우선 클래스 안으로 이동
+    int len = 0;
+    std::string msg = _msg[fd];
 
-    while ((len = recv(fd, _buf, BUF_SIZE, 0)) != 0) // 0 : EOF
+    while ((len = recv(fd, _buf, BUF_SIZE, 0)) > 0) // 0 : EOF
     {
-        if (len < 0)
-            throw std::runtime_error("Error : recv failed");
-        if (len == 0)
-            throw std::runtime_error("Closed socket");
         _buf[len] = 0;
         msg += _buf;
-        if (msg.length() >= 2 && !msg.substr(msg.length() - 2).compare("\r\n")) // \r\n
-            break;
+        _msg[fd] += _buf;
+        if (msg.length() >= 2 && !msg.substr(msg.length() - 2).compare("\r\n"))
+        {
+            std::cout << "\n[ Client " << fd << " ]\n";
+            std::cout << msg << "\n";
+            _msg[fd] = "";
+            return (msg);
+        }
     }
-    return (msg);
+    if (len == 0)
+        throw std::runtime_error("Closed socket");
+    return ("");
 }
 
 void Server::handle_err(int err_num, std::string err_msg, int c_fd)
@@ -254,8 +257,6 @@ str_vec Server::split_commands(std::string msg)
     return (commands);
 }
 
-
-/*  구현중  */
 int Server::execute_command(std::string msg, int c_fd)
 {
     str_vec commands = split_commands(msg);
@@ -270,77 +271,87 @@ int Server::execute_command(std::string msg, int c_fd)
     return (1);
 }
 
-// 처음 들어왔을 때
-    // client vec
-// 계속 통신 하고 있는 앤지 
-
 int Server::compare_pwd(std::string const& cpwd)
 {
-    return(cpwd.compare(_pwd));
+    std::string pwd = cpwd;
+    if (pwd.find("\n") != std::string::npos)
+        pwd.erase(pwd.length() - 1);
+    return(_pwd.compare(pwd));
 }
 
 void Server::save_client(Client& client)
 {
-    _client.push_back(client);
+    _client.push_back(&client);
 }
 
 void Server::save_channel(Channel& channel)
 {
-    _channel.push_back(channel);
+    _channel.push_back(&channel);
 }
 
-Client& Server::getClient(int c_fd)
-{
-    client_vec::iterator it;
-
-    for (it = _client.begin(); it != _client.end(); ++it)
-    {
-        if (c_fd != it->get_fd())
-            continue;
-        else
-            break;
-    }
-    return (*it);
-}
-
-Client& Server::getClient(std::string name)
-{
-    client_vec::iterator it;
-
-    for (it = _client.begin(); it != _client.end(); ++it)
-    {
-        if (name != it->get_nick())
-            continue;
-        else
-            break;
-    }
-    return (*it);
-}
-
-Channel& Server::getChannel(std::string name)
-{
-    channel_vec::iterator it;
-
-    for (it = _channel.begin(); it != _channel.end(); ++it)
-    {
-        if (name != it->get_name())
-            continue;
-        else
-            break;
-    }
-    return (*it);
-}
-
-int Server::is_client(int c_fd)
+Client* Server::getClient(int c_fd)
 {
     client_vec::iterator it;
 
     for (it = _client.begin(); it < _client.end(); ++it)
     {
-        if ((*it).get_fd() == c_fd)
-            return 1;
+        if (c_fd == (*it)->get_fd())
+        {
+            return (*it);
+            break;
+        }
     }
-    return 0;
+    return NULL;
+}
+
+Client* Server::getClient(std::string name)
+{
+    client_vec::iterator it;
+
+    for (it = _client.begin(); it < _client.end(); ++it)
+    {
+        if (name == (*it)->get_nick())
+        {
+            return (*it);
+            break;
+        }
+    }
+    return NULL;
+}
+
+Client* Server::getClientByHost(std::string host)
+{
+    client_vec::iterator it;
+
+    for (it = _client.begin(); it < _client.end(); ++it)
+    {
+        if (host == (*it)->get_host())
+        {
+            return (*it);
+            break;
+        }
+    }
+    return NULL;
+}
+
+Channel* Server::getChannel(std::string name)
+{
+    channel_vec::iterator it;
+
+    for (it = _channel.begin(); it != _channel.end(); ++it)
+    {
+        if (name == (*it)->get_name())
+        {
+            return (*it);
+            break;
+        }
+    }
+    return NULL;
+}
+
+void Server::set_empty_string(int c_fd)
+{
+    _msg[c_fd] = "";
 }
 
 void Server::delClient(int c_fd)
@@ -349,30 +360,30 @@ void Server::delClient(int c_fd)
 
     for (it = _client.begin(); it < _client.end(); ++it)
     {
-        if((*it).get_fd() == c_fd)
+        if((*it)->get_fd() == c_fd)
         {
+            delete *it;
             _client.erase(it);
-            return ;
+            break ;
         }
     }
-    close_fd(c_fd);
+    close(c_fd);
 }
 
-
-void Server::delChannel(Channel& channel)
+void Server::delChannel(Channel* channel)
 {
     channel_vec::iterator it;
 
     for (it = _channel.begin(); it < _channel.end(); ++it)
     {
-        if((*it).get_name() == channel.get_name())
+        if((*it)->get_name() == channel->get_name())
         {
+            delete *it;
             _channel.erase(it);
             return ;
         }
     }
 }
-
 
 int Server::is_valid_nick(int c_fd, std::string nick)
 {
@@ -381,7 +392,7 @@ int Server::is_valid_nick(int c_fd, std::string nick)
     (void)c_fd;
     for (it = _client.begin(); it < _client.end(); ++it)
     {
-        if (it->get_nick() == nick) 
+        if ((*it)->get_nick() == nick) 
             return (0);
     }
     return (1);
@@ -393,7 +404,7 @@ int Server::is_valid_channel(std::string name)
 
     for (it = _channel.begin(); it < _channel.end(); ++it)
     {
-        if (it->get_name() == name) 
+        if ((*it)->get_name() == name) 
             return (0);
     }
     return (1);
