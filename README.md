@@ -2,7 +2,7 @@
 make IRC protocol Server
 
 ## IRC란
-Internet Relay Chat의 약자로 실시간 기본 채팅서비스 입니다.
+Internet Relay Chat의 약자로 실시간 기본 채팅서비스 입니다.  
 소켓 프로그래밍으로 서버에서 클라이언트의 연결 요청이 오면 클라이언트와 연결을 맺고 소켓을 만듭니다.
 
 ## 구현한 명령어
@@ -37,9 +37,9 @@ Internet Relay Chat의 약자로 실시간 기본 채팅서비스 입니다.
 채널의 모드(mode)를 변경하는 데 사용됩니다.
 
 ## 소켓
-socket() - 소켓을 생성합니다.
-bind() - ip와 port 번호를 설정합니다.
-listen() - 클라이언트 접근 요청 수신 대기열을 생성합니다.
+socket() - 소켓을 생성합니다.  
+bind() - ip와 port 번호를 설정합니다.  
+listen() - 클라이언트 접근 요청 수신 대기열을 생성합니다.  
 accept() - 클라이언트와의 연결을 기다립니다.
 
 ## 멀티플렉싱
@@ -57,9 +57,9 @@ struct pollfd {
    short revents;    /* returned events */
 };
 ```
-fd - file descriptor입니다.
-events - fd에 대해서 주시할 event입니다.
-revents - fd에 발생한 event를 의미합니다.
+fd - file descriptor입니다.  
+events - fd에 대해서 주시할 event입니다.  
+revents - fd에 발생한 event를 의미합니다.  
 
 ![Alt text](./image.png)
 이 이벤트들 중 POLLIN, POLLHUP, POLLNVAL 3개의 이벤트를 사용해 서버를 구현했습니다.
