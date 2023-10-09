@@ -55,12 +55,12 @@ void Server::push_back_fd(int fd, short event)
 
 void Server::server_run()
 {
-    int prepared_fd = 0;
+    int ret = 0;
 
     while (1)
     {
-		prepared_fd = poll(_pollfd_vec.data(), _pollfd_vec.size(), 1000);
-        if (prepared_fd < 0)
+		ret = poll(_pollfd_vec.data(), _pollfd_vec.size(), 1000);
+        if (ret < 0)
             throw std::runtime_error("Error : poll failed");
         // server fd
         if (_pollfd_vec[0].revents & POLLIN)
